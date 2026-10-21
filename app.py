@@ -6,7 +6,6 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from dash import Dash, html, dcc, Input, Output
 import plotly.graph_objects as go
-import pandas as pd
 
 from src.producer import start_producer
 from src.consumer import get_latest_vitals, get_county_summary, get_recent_alerts, get_stats
@@ -15,18 +14,18 @@ app = Dash(__name__)
 app.title = "ZENIK.AI | Real-Time Health Metrics"
 server = app.server  # expose Flask server for gunicorn
 
-# Ensure producer starts exactly once across all gunicorn workers
-_producer_started = False
-_producer_lock = threading.Lock()
+# Start producer lazily on first request (survives gunicorn fork)
+_started = False
+_started_lock = threading.Lock()
 
-def ensure_producer():
-    global _producer_started
-    with _producer_lock:
-        if not _producer_started:
-            start_producer(interval=1.0)
-            _producer_started = True
-
-ensure_producer()
+@server.before_request
+def maybe_start_producer():
+    global _started
+    if not _started:
+        with _started_lock:
+            if not _started:
+                start_producer(interval=1.0)
+                _started = True
 
 app.layout = html.Div(style={"backgroundColor": "#0f1117", "minHeight": "100vh", "fontFamily": "Arial, sans-serif", "padding": "20px"}, children=[
 
@@ -36,22 +35,18 @@ app.layout = html.Div(style={"backgroundColor": "#0f1117", "minHeight": "100vh",
 
     dcc.Interval(id="interval", interval=2000, n_intervals=0),
 
-    # KPI row
     html.Div(id="kpi-row", style={"display": "flex", "gap": "20px", "marginBottom": "20px"}),
 
-    # Charts row 1
     html.Div(style={"display": "flex", "gap": "20px", "marginBottom": "20px"}, children=[
         html.Div(dcc.Graph(id="hr-chart"), style={"flex": "1"}),
         html.Div(dcc.Graph(id="spo2-chart"), style={"flex": "1"}),
     ]),
 
-    # Charts row 2
     html.Div(style={"display": "flex", "gap": "20px", "marginBottom": "20px"}, children=[
         html.Div(dcc.Graph(id="bp-chart"), style={"flex": "1"}),
         html.Div(dcc.Graph(id="temp-chart"), style={"flex": "1"}),
     ]),
 
-    # County summary and alerts
     html.Div(style={"display": "flex", "gap": "20px"}, children=[
         html.Div(dcc.Graph(id="county-chart"), style={"flex": "1"}),
         html.Div([
@@ -91,9 +86,6 @@ chart_layout = dict(
     Input("interval", "n_intervals")
 )
 def update_dashboard(n):
-    # Ensure producer is running (in case worker restarted)
-    ensure_producer()
-
     df = get_latest_vitals(100)
     stats = get_stats()
     county_df = get_county_summary()
