@@ -1,10 +1,11 @@
 import sys
 import os
+import threading
+
 sys.path.insert(0, os.path.dirname(__file__))
 
 from dash import Dash, html, dcc, Input, Output
 import plotly.graph_objects as go
-import plotly.express as px
 import pandas as pd
 
 from src.producer import start_producer
@@ -14,8 +15,18 @@ app = Dash(__name__)
 app.title = "ZENIK.AI | Real-Time Health Metrics"
 server = app.server  # expose Flask server for gunicorn
 
-# Start producer once (gunicorn preload_app handles this)
-start_producer(interval=1.0)
+# Ensure producer starts exactly once across all gunicorn workers
+_producer_started = False
+_producer_lock = threading.Lock()
+
+def ensure_producer():
+    global _producer_started
+    with _producer_lock:
+        if not _producer_started:
+            start_producer(interval=1.0)
+            _producer_started = True
+
+ensure_producer()
 
 app.layout = html.Div(style={"backgroundColor": "#0f1117", "minHeight": "100vh", "fontFamily": "Arial, sans-serif", "padding": "20px"}, children=[
 
@@ -28,12 +39,13 @@ app.layout = html.Div(style={"backgroundColor": "#0f1117", "minHeight": "100vh",
     # KPI row
     html.Div(id="kpi-row", style={"display": "flex", "gap": "20px", "marginBottom": "20px"}),
 
-    # Charts row
+    # Charts row 1
     html.Div(style={"display": "flex", "gap": "20px", "marginBottom": "20px"}, children=[
         html.Div(dcc.Graph(id="hr-chart"), style={"flex": "1"}),
         html.Div(dcc.Graph(id="spo2-chart"), style={"flex": "1"}),
     ]),
 
+    # Charts row 2
     html.Div(style={"display": "flex", "gap": "20px", "marginBottom": "20px"}, children=[
         html.Div(dcc.Graph(id="bp-chart"), style={"flex": "1"}),
         html.Div(dcc.Graph(id="temp-chart"), style={"flex": "1"}),
@@ -79,6 +91,9 @@ chart_layout = dict(
     Input("interval", "n_intervals")
 )
 def update_dashboard(n):
+    # Ensure producer is running (in case worker restarted)
+    ensure_producer()
+
     df = get_latest_vitals(100)
     stats = get_stats()
     county_df = get_county_summary()
@@ -101,7 +116,7 @@ def update_dashboard(n):
     hr_fig.add_trace(go.Scatter(x=df["timestamp"], y=df["heart_rate"],
                                 mode="lines", line=dict(color="#00ff88", width=1.5),
                                 fill="tozeroy", fillcolor="rgba(0,255,136,0.1)"))
-    hr_fig.update_layout(title="Heart Rate (bpm)", **{k: v for k, v in chart_layout.items() if k != "title"})
+    hr_fig.update_layout(title="Heart Rate (bpm)")
     hr_fig.add_hline(y=130, line_dash="dash", line_color="#ff4444", annotation_text="Critical")
 
     spo2_fig = go.Figure(layout=chart_layout)
