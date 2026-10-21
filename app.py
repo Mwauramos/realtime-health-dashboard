@@ -12,7 +12,9 @@ from src.consumer import get_latest_vitals, get_county_summary, get_recent_alert
 
 app = Dash(__name__)
 app.title = "ZENIK.AI | Real-Time Health Metrics"
+server = app.server  # expose Flask server for gunicorn
 
+# Start producer once (gunicorn preload_app handles this)
 start_producer(interval=1.0)
 
 app.layout = html.Div(style={"backgroundColor": "#0f1117", "minHeight": "100vh", "fontFamily": "Arial, sans-serif", "padding": "20px"}, children=[
